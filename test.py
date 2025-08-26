@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 """
-Main entry point for running DIET finetuning experiments.
+Inference for DIET finetuning experiments.
 """
 # Standard library imports
 import os
 import argparse
+import time
 
 # Third-party imports
+import numpy as np
 import torch
 
 # Configuration imports
@@ -15,24 +17,21 @@ from config import create_experiment_config_from_args, DEVICE
 # Data loading
 from loaders.data_loader import prepare_data_loaders
 
-# Training components
-from training.trainer import DIETTrainer
-
 # Utility modules
 from utils.wandb_logger import (
     init_wandb,
     create_experiment_dashboard,
-    log_model_architecture,
+    log_zero_shot_metrics,
 )
-from utils.lr_schedule import create_warmup_cosine_scheduler, get_scheduler_info
 from models.utils import set_reproducibility_seeds, get_model
+from evaluation.metrics import zero_shot_eval
 
 
-def train(args):
-    """Main training function"""
+def test(args):
+    """Main inference function"""
     print("\n" + "=" * 70)
     backbone_info = f"{args.backbone.upper()}-{args.model_size}"
-    print(f"DIET FINETUNING EXPERIMENT: {backbone_info} on {args.dataset}")
+    print(f"DIET FINETUNING INFERENCE: {backbone_info} on {args.dataset}")
     print("=" * 70)
 
     # Basic settings
@@ -45,7 +44,7 @@ def train(args):
         dataset_name=args.dataset,
         batch_size=args.batch_size,
         da_strength=args.da_strength,
-        limit_data=args.limit_data,
+        limit_data=np.inf,  # not limiting train data for kNN and LP eval
         root=args.data_root,
     )
 
@@ -64,69 +63,13 @@ def train(args):
     if embedding_dim is None:
         raise ValueError("embedding_dim cannot be None")
 
-    # Create DIET classification head
-    diet_head = torch.nn.Linear(embedding_dim, num_diet_classes, bias=False).to(device)
-
-    # Create optimizer
-    print(f"Creating optimizer with lr={args.lr}, weight_decay={args.weight_decay}")
-    optimizer = torch.optim.AdamW(
-        list(net.parameters()) + list(diet_head.parameters()),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
+    checkpoint_path = (
+        os.path.join(args.checkpoint_dir, args.resume_from)
+        if not os.path.isabs(args.resume_from)
+        else args.resume_from
     )
 
-    # Add learning rate scheduler with warmup
-    scheduler_info = get_scheduler_info(args.num_epochs, warmup_ratio=0.1)
-    print("Creating learning rate scheduler (warmup + cosine annealing)")
-    print(
-        f"Warmup epochs: {scheduler_info['warmup_epochs']}, "
-        f"Total epochs: {scheduler_info['total_epochs']}"
-    )
-
-    scheduler = create_warmup_cosine_scheduler(
-        optimizer=optimizer,
-        num_epochs=args.num_epochs,
-        base_lr=args.lr,
-        warmup_ratio=0.1,
-        eta_min=1e-5,
-    )
-
-    # Load from checkpoint if specified
-    start_epoch = 0
-    if args.resume_from:
-        checkpoint_path = (
-            os.path.join(args.checkpoint_dir, args.resume_from)
-            if not os.path.isabs(args.resume_from)
-            else args.resume_from
-        )
-        if os.path.exists(checkpoint_path):
-            print(f"\nLoading checkpoint from {checkpoint_path}")
-            checkpoint = torch.load(
-                checkpoint_path, map_location=device, weights_only=False
-            )
-
-            # Load model and optimizer states
-            net.load_state_dict(checkpoint["model_state_dict"])
-            diet_head.load_state_dict(checkpoint["W_diet_state_dict"])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-            # Get the starting epoch
-            start_epoch = checkpoint["epoch"]
-            print(f"Resuming from epoch {start_epoch}")
-
-            # Adjust scheduler to the correct epoch
-            for _ in range(start_epoch):
-                scheduler.step()
-
-            print(
-                f"Successfully loaded checkpoint. Current learning rate: "
-                f"{scheduler.get_last_lr()[0]:.6f}"
-            )
-        else:
-            print(
-                f"Warning: Checkpoint file {checkpoint_path} not found. "
-                f"Starting from scratch."
-            )
+    assert os.path.exists(checkpoint_path)
 
     # Create experiment configuration
     config = create_experiment_config_from_args(args)
@@ -134,50 +77,64 @@ def train(args):
     # Convert to wandb format for logging
     experiment_config = config.to_wandb_config()
 
-    # Add runtime fields
-    experiment_config["start_epoch"] = start_epoch
-
     # Initialize wandb if enabled
     run = None
     if args.use_wandb:
         run = init_wandb(experiment_config)
-        log_model_architecture(run, net, diet_head)
 
-    # Create trainer
-    trainer = DIETTrainer(
+    # initial kNN and LP eval
+    print("\n" + "=" * 50)
+    print("INITIAL ZERO-SHOT EVALUATION (BEFORE DIET CONTINUED PRETRAINING)")
+    print("=" * 50)
+    initial_time = time.time()
+
+    initial_results = zero_shot_eval(
         model=net,
-        diet_head=diet_head,
-        device=device,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        config=config,
-    )
-
-    # Choose evaluation loader based on parameter
-    eval_loader = test_loader if args.eval_on_test else val_loader
-    eval_set_name = "test" if args.eval_on_test else "validation"
-    print(f"Using {eval_set_name} set for evaluation")
-
-    # Run the training
-    metrics_history, initial_results, final_results = trainer.train(
         train_loader=train_loader,
-        test_loader=eval_loader,
-        num_epochs=args.num_epochs,
-        run=run,
-        eval_frequency=args.eval_frequency,
-        start_epoch=start_epoch,
+        test_loader=(test_loader if args.eval_on_test else val_loader),
+        num_classes=num_classes,
+        device=device,
+        probe_lr=1e-3,
+        probe_steps=10000,
     )
+    print(f"Initial evaluation completed in {time.time() - initial_time:.2f}s")
+
+    if run is not None:
+        log_zero_shot_metrics(run, initial_results, 0)
+
+    print(f"\nLoading checkpoint from {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+    # Loading only model, no need to load optimizer + DIET head
+    net.load_state_dict(checkpoint["model_state_dict"])
+
+    initial_time = time.time()
+
+    final_results = zero_shot_eval(
+        model=net,
+        train_loader=train_loader,
+        test_loader=(test_loader if args.eval_on_test else val_loader),
+        num_classes=num_classes,
+        device=device,
+        probe_lr=1e-3,
+        probe_steps=10000,
+    )
+
+    print(f"Final evaluation completed in {time.time() - initial_time:.2f}s")
+
+    if run is not None:
+        log_zero_shot_metrics(run, final_results, 1)
 
     # Create experiment dashboard in wandb
     if args.use_wandb and run is not None:
         create_experiment_dashboard(
-            run, metrics_history, initial_results, final_results, experiment_config
+            run, None, initial_results, final_results, experiment_config
         )
 
         # Finish the wandb run
         run.finish()
 
-    return metrics_history, initial_results, final_results
+    return initial_results, final_results
 
 
 def parse_args():
@@ -331,8 +288,8 @@ def main():
     os.makedirs(args.wandb_dir, exist_ok=True)
     os.makedirs(args.data_root, exist_ok=True)
 
-    # Run the training
-    train(args)
+    # Run inference
+    test(args)
 
 
 if __name__ == "__main__":

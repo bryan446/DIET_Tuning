@@ -11,6 +11,7 @@ from sklearn.metrics import (
     adjusted_rand_score,
     normalized_mutual_info_score,
     f1_score,
+    roc_auc_score,
 )
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -110,9 +111,30 @@ def zero_shot_eval(
     test_features = normalize(test_features)
     knn.fit(train_features, train_labels)
     knn_pred = knn.predict(test_features)
+    knn_proba = knn.predict_proba(test_features)
 
     results["knn_acc"] = accuracy_score(test_labels, knn_pred)
+    results["knn_f1"] = f1_score(
+        test_labels, knn_pred, average="macro", zero_division=0
+    )
+
+    # ROC AUC calculation - handle binary vs multiclass
+    try:
+        if num_classes == 2:
+            # For binary classification, use positive class probabilities
+            positive_proba = np.array(knn_proba)[:, 1]
+            results["knn_roc_auc"] = roc_auc_score(test_labels, positive_proba)
+        else:
+            results["knn_roc_auc"] = roc_auc_score(
+                test_labels, knn_proba, multi_class="ovr", average="macro"
+            )
+    except ValueError as e:
+        print(f"Warning: Could not compute ROC AUC for k-NN: {e}")
+        results["knn_roc_auc"] = 0.0
+
     print(f"k-NN accuracy: {results['knn_acc']:.4f}, " f"time: {time.time() - t0:.2f}s")
+    print(f"k-NN F1 (macro): {results['knn_f1']:.4f}")
+    print(f"k-NN ROC AUC: {results['knn_roc_auc']:.4f}")
 
     # ---------- Linear probe ----------
     print("Running linear probe evaluation (train on train, test on test)...")
@@ -159,12 +181,32 @@ def zero_shot_eval(
     with torch.no_grad():
         logits = clf(Xte)
         pred = logits.argmax(dim=1).cpu().numpy()
+        # Get probabilities for ROC AUC calculation
+        probe_proba = torch.softmax(logits, dim=1).cpu().numpy()
 
     results["linear_acc"] = accuracy_score(test_labels, pred)
+    results["linear_f1"] = f1_score(test_labels, pred, average="macro", zero_division=0)
+
+    # ROC AUC calculation for linear probe
+    try:
+        if num_classes == 2:
+            # For binary classification, use positive class probabilities
+            positive_proba = probe_proba[:, 1]
+            results["linear_roc_auc"] = roc_auc_score(test_labels, positive_proba)
+        else:
+            results["linear_roc_auc"] = roc_auc_score(
+                test_labels, probe_proba, multi_class="ovr", average="macro"
+            )
+    except ValueError as e:
+        print(f"Warning: Could not compute ROC AUC for linear probe: {e}")
+        results["linear_roc_auc"] = 0.0
+
     print(
         f"Linear probe accuracy: {results['linear_acc']:.4f}, "
         f"time: {time.time() - t0:.2f}s"
     )
+    print(f"Linear probe F1 (macro): {results['linear_f1']:.4f}")
+    print(f"Linear probe ROC AUC: {results['linear_roc_auc']:.4f}")
 
     print(f"Total zero-shot evaluation time: {time.time() - start_time:.2f}s")
     return results
