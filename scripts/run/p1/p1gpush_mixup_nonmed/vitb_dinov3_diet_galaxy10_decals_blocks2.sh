@@ -71,7 +71,6 @@ python -u main.py \
     --dataset galaxy10_decals \
     --num-epochs 150 \
     --eval-frequency 10 \
-    --num-trained-blocks 2 \
     --data-root /dtu/p1/jakambs/diet/data \
     --wandb-dir /dtu/p1/jakambs/diet/wandb \
     --checkpoint-dir /dtu/p1/jakambs/diet/checkpoints \
