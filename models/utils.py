@@ -1,8 +1,11 @@
 """Model utility functions shared across training and inference scripts."""
 
+from pathlib import Path
 import random
+
 import torch
 import numpy as np
+from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 
 from config import DEVICE
 from utils.sanity_check import unified_sanity_check
@@ -65,3 +68,14 @@ def get_model(backbone_type, model_size, run_sanity_check, use_wandb):
 
     else:
         raise ValueError(f"Unknown backbone type: {backbone_type}")
+
+
+def dcp_folder_to_torch_save(
+    dcp_dir: str | Path, out_file: str | Path = "weights.torch"
+):
+    dcp_dir = Path(dcp_dir)
+    out_file = Path(out_file)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    # Convert the DCP directory into a single torch.save file containing a state_dict
+    dcp_to_torch_save(str(dcp_dir), str(out_file))
+    return out_file
