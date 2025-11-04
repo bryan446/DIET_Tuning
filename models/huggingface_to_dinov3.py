@@ -170,6 +170,9 @@ def convert_dinov3_to_huggingface(dinov3_state_dict, use_student=False):
     """
     Convert native DINOv3 checkpoints to HuggingFace format.
     """
+    if "model" in dinov3_state_dict:
+        dinov3_state_dict = dinov3_state_dict["model"]
+
     key_prefix = "student.backbone" if use_student else "teacher.backbone"
 
     assert any(k.startswith(key_prefix) for k in dinov3_state_dict.keys()), (

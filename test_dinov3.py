@@ -70,6 +70,16 @@ def test(args):
     device = DEVICE
     print(f"Using device: {device}")
 
+    # Create the backbone model
+    cp_hf_model = get_hf_model_from_checkpoint_folder(args.local_dino_checkpoint_folder)
+    model = AutoModel.from_pretrained(cp_hf_model)
+    model = DINOWrapper(model, version="v3")
+    model.to(device)
+
+    # add stuff to args for experiment config creation
+    args.backbone = "dinov3_cp"
+    args.model_size = cp_hf_model.split("/")[-1].split("-")[1]
+
     # Load data
     dataset_name = args.dataset
 
@@ -86,12 +96,6 @@ def test(args):
     num_diet_classes = dataset_info["num_diet_classes"]
     print(f"Loaded dataset with {num_classes} classes")
     print(f"Dataset size determines {num_diet_classes} diet classes")
-
-    # Create the backbone model
-    cp_hf_model = get_hf_model_from_checkpoint_folder(args.local_dino_checkpoint_folder)
-    model = AutoModel.from_pretrained(cp_hf_model)
-    model = DINOWrapper(model, version="v3")
-    model.to(device)
 
     # Create experiment configuration
     config = create_experiment_config_from_args(args)
@@ -152,16 +156,12 @@ def test(args):
 
     print(f"Final evaluation completed in {time.time() - initial_time:.2f}s")
 
-    # Log inference metrics summary table
-    backbone_type = "dinov3_cp"
-    model_size = cp_hf_model.split("-")[1]  # e.g., "vitl16"
-
     if run is not None:
         log_inference_metrics_summary_table(
             run=run,
-            wandb_id=args.wandb_id,
-            backbone_type=backbone_type,
-            model_size=model_size,
+            wandb_id=run.id,
+            backbone_type=args.backbone,
+            model_size=args.model_size,
             dataset=dataset_name,
             initial_metrics=initial_results,
             final_metrics=final_results,
@@ -186,9 +186,6 @@ def test(args):
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="DIET Finetuning Framework")
-
-    # Model arguments - now inferred from wandb config
-    # (backbone and model-size are extracted from the checkpoint's run config)
 
     # Dataset arguments
     parser.add_argument(
@@ -264,12 +261,6 @@ def parse_args():
 
     # Logging and saving arguments
     parser.add_argument(
-        "--checkpoint-dir",
-        type=str,
-        default="checkpoints",
-        help="Directory to save checkpoints",
-    )
-    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -282,14 +273,16 @@ def parse_args():
         help="Disable Weights & Biases logging",
     )
     parser.add_argument(
-        "--run-sanity-check",
-        action="store_true",
-        help="Run the initial k-NN sanity check on CIFAR10.",
+        "--wandb-entity",
+        type=str,
+        default=None,
+        help="Weights & Biases entity (organization) name",
     )
     parser.add_argument(
-        "--store-embeddings",
-        action="store_true",
-        help="Whether to store embeddings from the model",
+        "--wandb-id",
+        type=str,
+        default=None,
+        help="Existing wandb run ID to attach inference results to",
     )
     parser.add_argument(
         "--wandb-dir",
@@ -302,6 +295,16 @@ def parse_args():
         type=str,
         default="DIET_INFERENCE",
         help="Prefix for wandb experiment names",
+    )
+    parser.add_argument(
+        "--run-sanity-check",
+        action="store_true",
+        help="Run the initial k-NN sanity check on CIFAR10.",
+    )
+    parser.add_argument(
+        "--store-embeddings",
+        action="store_true",
+        help="Whether to store embeddings from the model",
     )
     parser.add_argument(
         "--local-dino-checkpoint-folder",
@@ -329,8 +332,7 @@ def main():
     # Set reproducibility seeds
     set_reproducibility_seeds(args.seed)
 
-    # Create checkpoint directory if it doesn't exist
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    # Create directories if they don't exist
     os.makedirs(args.wandb_dir, exist_ok=True)
     os.makedirs(args.data_root, exist_ok=True)
 
