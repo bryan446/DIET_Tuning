@@ -2,6 +2,7 @@
 """
 Main entry point for running DIET finetuning experiments.
 """
+
 # Standard library imports
 import os
 import argparse
@@ -130,6 +131,9 @@ def train(args):
 
     # Create experiment configuration
     config = create_experiment_config_from_args(args)
+    config.data.num_diet_classes = (
+        num_diet_classes  # Update diet classes based on dataset
+    )
 
     # Convert to wandb format for logging
     experiment_config = config.to_wandb_config()
@@ -279,6 +283,32 @@ def parse_args():
         help="Evaluate on test set instead of validation set",
     )
 
+    # Mixup/CutMix augmentation arguments
+    parser.add_argument(
+        "--mixup-alpha",
+        type=float,
+        default=1.0,
+        help="Mixup alpha parameter (0.0 to disable mixup)",
+    )
+    parser.add_argument(
+        "--cutmix-alpha",
+        type=float,
+        default=1.0,
+        help="CutMix alpha parameter (0.0 to disable cutmix)",
+    )
+    parser.add_argument(
+        "--mixup-cutmix-prob",
+        type=float,
+        default=0.0,
+        help="Probability of applying mixup/cutmix augmentation",
+    )
+    parser.add_argument(
+        "--mixup-cutmix-switch-prob",
+        type=float,
+        default=0.0,
+        help="Probability of selecting cutmix over mixup when both are active",
+    )
+
     # Logging and saving arguments
     parser.add_argument(
         "--checkpoint-dir",
@@ -314,6 +344,12 @@ def parse_args():
         type=str,
         default="DIET",
         help="Prefix for wandb experiment names",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="DIET-Finetuning_v4",
+        help="Wandb project name",
     )
 
     return parser.parse_args()

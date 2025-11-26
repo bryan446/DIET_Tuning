@@ -23,10 +23,11 @@ cd /home/jambsdor/projects/DIET_Tuning
 source .venv/bin/activate
 
 PROJECT_DIR=/home/jambsdor/projects/DIET_Tuning
+DATA_DIR=/data/people/jambsdor/diet_data
 
 # Set environment variables
 srun nvidia-smi
-export WANDB_DATA_DIR=$PROJECT_DIR/wandb
+export WANDB_DATA_DIR=$DATA_DIR/wandb
 
 # Run the training script
 srun python -u main.py \

@@ -129,24 +129,13 @@ class ModelConfig(BaseConfig):
     model_size: str
     temperature: float = 3.0
 
-    def validate(self) -> None:
-        """Validate model configuration."""
-        if self.backbone_type not in MODEL_SPECS:
-            valid_types = list(MODEL_SPECS.keys())
-            raise ValueError(
-                f"Invalid backbone: {self.backbone_type}. Valid: {valid_types}"
-            )
-
-        if self.model_size not in MODEL_SPECS[self.backbone_type]["sizes"]:
-            valid_sizes = MODEL_SPECS[self.backbone_type]["sizes"]
-            raise ValueError(
-                f"Invalid size for {self.backbone_type}: {self.model_size}. Valid: {valid_sizes}"
-            )
-
     @property
     def embedding_dim(self) -> int:
         """Get embedding dimension for this model configuration."""
         return get_model_embedding_dim(self.backbone_type, self.model_size)
+
+    def validate(self) -> None:
+        pass
 
 
 def get_model_embedding_dim(backbone_type: str, model_size: str) -> int:

@@ -1,9 +1,33 @@
 """DINOv2/v3 model implementation for DIET finetuning."""
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel
 from config.models import MODEL_SPECS
+
+import logging
+from typing import Dict, Optional
+
+logger = logging.getLogger("dinov3")
+
+
+class DINOWrapper(nn.Module):
+    def __init__(self, model, version):
+        super().__init__()
+        self.model = model
+        self.version = version
+
+    def forward(self, x):
+        if x.shape[-1] != 224:
+            x = F.interpolate(x, size=(224, 224), mode="bilinear", align_corners=False)
+
+        outputs = self.model(x)
+
+        if self.version == "v3":
+            return outputs.pooler_output
+        else:
+            return outputs.last_hidden_state[:, 0]
 
 
 def get_dinov2_model(device, model_size="small"):
@@ -47,25 +71,6 @@ def get_dino_model(device, model_size, version="v2"):
     # Unfreeze all parameters
     for param in base_model.parameters():
         param.requires_grad = True
-
-    class DINOWrapper(nn.Module):
-        def __init__(self, model, version):
-            super().__init__()
-            self.model = model
-            self.version = version
-
-        def forward(self, x):
-            if x.shape[-1] != 224:
-                x = F.interpolate(
-                    x, size=(224, 224), mode="bilinear", align_corners=False
-                )
-
-            outputs = self.model(x)
-
-            if self.version == "v3":
-                return outputs.pooler_output
-            else:
-                return outputs.last_hidden_state[:, 0]
 
     model = DINOWrapper(base_model, version).to(device)
     embedding_dim = spec["embedding_dims"][model_size]

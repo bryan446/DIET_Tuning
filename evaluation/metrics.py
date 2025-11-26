@@ -1,11 +1,13 @@
 """Evaluation utilities for DIET finetuning framework."""
 
+import os
 import numpy as np
 import torch
 import time
 from tqdm import tqdm
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
+from sklearn.preprocessing import normalize
 from sklearn.metrics import (
     accuracy_score,
     adjusted_rand_score,
@@ -21,10 +23,10 @@ def zero_shot_eval(
     model,
     train_loader,
     test_loader,
-    num_classes,
     device,
     probe_lr=1e-3,
     probe_steps=20000,
+    store_embeddings=False,
 ):
     """Evaluate model using zero-shot methods with proper train/test split.
 
@@ -82,18 +84,20 @@ def zero_shot_eval(
     train_features, train_labels = extract_features(train_loader, "train")
     test_features, test_labels = extract_features(test_loader, "test")
 
-    print(
-        f"Train features: {train_features.shape}, "
-        f"Train labels: {train_labels.shape}"
-    )
-    print(f"Test features: {test_features.shape}, " f"Test labels: {test_labels.shape}")
+    if store_embeddings:
+        store_path = f"data/embeddings/mae_{time.strftime('%Y%m%d-%H%M%S')}/"
+        os.makedirs(store_path, exist_ok=True)
+        np.save(f"{store_path}train_features.npy", train_features)
+        np.save(f"{store_path}train_labels.npy", train_labels)
+        print(f"Stored train features and labels in {store_path}")
+
+    print(f"Train features: {train_features.shape}, Train labels: {train_labels.shape}")
+    print(f"Test features: {test_features.shape}, Test labels: {test_labels.shape}")
     print(f"Time: {time.time() - start_time:.2f}s")
 
     results = {}
 
     # ---------- k-NN ----------
-    from sklearn.preprocessing import normalize
-
     print("Running k-NN evaluation...")
     t0 = time.time()
 
@@ -119,6 +123,8 @@ def zero_shot_eval(
     )
 
     # ROC AUC calculation - handle binary vs multiclass
+
+    num_classes = len(np.unique(train_labels))
     try:
         if num_classes == 2:
             # For binary classification, use positive class probabilities
@@ -132,7 +138,7 @@ def zero_shot_eval(
         print(f"Warning: Could not compute ROC AUC for k-NN: {e}")
         results["knn_roc_auc"] = 0.0
 
-    print(f"k-NN accuracy: {results['knn_acc']:.4f}, " f"time: {time.time() - t0:.2f}s")
+    print(f"k-NN accuracy: {results['knn_acc']:.4f}, time: {time.time() - t0:.2f}s")
     print(f"k-NN F1 (macro): {results['knn_f1']:.4f}")
     print(f"k-NN ROC AUC: {results['knn_roc_auc']:.4f}")
 
@@ -208,6 +214,22 @@ def zero_shot_eval(
     print(f"Linear probe F1 (macro): {results['linear_f1']:.4f}")
     print(f"Linear probe ROC AUC: {results['linear_roc_auc']:.4f}")
 
+    # ---------- k-means clustering ----------
+    print("Running k-means clustering evaluation...")
+    t0 = time.time()
+
+    # Use normalized test features for clustering
+    kmeans = KMeans(n_clusters=num_classes, random_state=42, n_init=10)
+    kmeans_pred = kmeans.fit_predict(test_features)
+
+    # Calculate k-means metrics
+    results["kmeans_ari"] = adjusted_rand_score(test_labels, kmeans_pred)
+    results["kmeans_nmi"] = normalized_mutual_info_score(test_labels, kmeans_pred)
+
+    print(f"k-means ARI: {results['kmeans_ari']:.4f}")
+    print(f"k-means NMI: {results['kmeans_nmi']:.4f}")
+    print(f"k-means time: {time.time() - t0:.2f}s")
+
     print(f"Total zero-shot evaluation time: {time.time() - start_time:.2f}s")
     return results
 
@@ -265,55 +287,6 @@ def evaluate_test_set(net, test_loader, device, W_probe):
         test_acc = np.mean(run_acc_test) if run_acc_test else 0
         print(f"\nOverall Test Accuracy: {test_acc:.4f}")
     return test_acc
-
-
-def create_zero_shot_progression_plot(metrics_history, tracked_epochs, metrics_list):
-    """Create zero-shot metrics progression plot
-
-    Args:
-        metrics_history: Dictionary of metrics history
-        tracked_epochs: List of epochs to track
-        metrics_list: List of metric names to include
-
-    Returns:
-        fig: Matplotlib figure
-    """
-    # Create figure
-    fig = Figure(figsize=(15, 10))
-
-    # Plot each metric's progression
-    for i, metric in enumerate(metrics_list):
-        ax = fig.add_subplot(2, 2, i + 1)
-        values = [
-            metrics_history["zero_shot_metrics"][e][metric] for e in tracked_epochs
-        ]
-        ax.plot(tracked_epochs, values, marker="o", linewidth=2)
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel(f"{metric} Score")
-        ax.set_title(f"Zero-shot {metric} Progression")
-        ax.grid(True)
-
-        # Add initial and final values as text annotations
-        ax.annotate(
-            f"{values[0]:.4f}",
-            (tracked_epochs[0], values[0]),
-            textcoords="offset points",
-            xytext=(0, 10),
-            ha="center",
-        )
-        ax.annotate(
-            f"{values[-1]:.4f}",
-            (tracked_epochs[-1], values[-1]),
-            textcoords="offset points",
-            xytext=(0, 10),
-            ha="center",
-        )
-
-    fig.tight_layout()
-    fig.suptitle("Zero-shot Metrics Progression During Training", fontsize=16)
-    fig.subplots_adjust(top=0.9)
-
-    return fig
 
 
 def create_training_progress_plot(metrics_history):

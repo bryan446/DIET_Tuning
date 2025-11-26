@@ -145,6 +145,7 @@ class DataConfig(BaseConfig):
     dataset_name: str
     batch_size: int = 32
     limit_data: int = 1000
+    num_diet_classes: Union[int, None] = None  # To be set dynamically
 
     def validate(self) -> None:
         """Validate data configuration."""

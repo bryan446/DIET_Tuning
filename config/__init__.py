@@ -5,7 +5,7 @@ components following DRY principles and single source of truth.
 """
 
 # Re-export main configuration classes
-from config.base_config import DEVICE, GLOBAL_DEFAULTS
+from config.base_config import DEVICE
 from config.models import (
     ModelConfig,
     get_model_embedding_dim,
@@ -72,7 +72,6 @@ def create_experiment_config(args, embedding_dim: int, dataset_info: dict):
 __all__ = [
     # Hardware and global settings
     "DEVICE",
-    "GLOBAL_DEFAULTS",
     # Configuration classes
     "ModelConfig",
     "DataConfig",

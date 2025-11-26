@@ -9,13 +9,6 @@ from abc import ABC, abstractmethod
 # Hardware settings - single source of truth
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Global defaults - centralized
-GLOBAL_DEFAULTS = {
-    "temperature": 1.0,
-    "enable_wandb": True,
-    "wandb_project": "DIET-Finetuning",
-}
-
 
 @dataclasses.dataclass
 class BaseConfig(ABC):

@@ -23,10 +23,11 @@ cd /home/jambsdor/projects/DIET_Tuning
 source .venv/bin/activate
 
 PROJECT_DIR=/home/jambsdor/projects/DIET_Tuning
+DATA_DIR=/data/people/jambsdor/diet_data
 
 # Set environment variables
 srun nvidia-smi
-export WANDB_DATA_DIR=$PROJECT_DIR/wandb
+export WANDB_DATA_DIR=$DATA_DIR/wandb
 
 # Run the training script
 srun python -u main.py \
@@ -39,7 +40,7 @@ srun python -u main.py \
     --dataset retinamnist \
     --num-epochs 150 \
     --num-trained-blocks 2 \
-    --data-root $PROJECT_DIR/data \
-    --wandb-dir $PROJECT_DIR/wandb \
-    --checkpoint-dir $PROJECT_DIR/checkpoints \
+    --data-root $DATA_DIR/data \
+    --wandb-dir $DATA_DIR/wandb \
+    --checkpoint-dir $DATA_DIR/checkpoints \
     $EXTRA_PYTHON_ARGS

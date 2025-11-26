@@ -9,12 +9,11 @@ from io import BytesIO
 
 # Import from our metrics module
 from evaluation.metrics import (
-    create_zero_shot_progression_plot,
     create_training_progress_plot,
 )
 
 
-def init_wandb(args):
+def init_wandb(wandb_cfg):
     """Initialize wandb for experiment tracking
 
     Args:
@@ -25,29 +24,29 @@ def init_wandb(args):
     """
     # Set wandb data directory to prevent pollution of home directory
     # This controls where artifacts staging and cache are stored
-    wandb_dir = args.get("wandb_dir", "wandb")
+    wandb_dir = wandb_cfg.get("wandb_dir", "wandb")
     os.environ["WANDB_DATA_DIR"] = wandb_dir
 
     # Create experiment name with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    wandb_prefix = args.get("wandb_prefix", "DIET")
+    wandb_prefix = wandb_cfg.get("wandb_prefix", "DIET")
     experiment_name = (
-        f"{wandb_prefix}_{args['backbone_type']}_"
-        f"{args['model_size']}_{args['dataset_name']}_{timestamp}"
+        f"{wandb_prefix}_{wandb_cfg['backbone_type']}_"
+        f"{wandb_cfg['model_size']}_{wandb_cfg['dataset_name']}_{timestamp}"
     )
 
     # Initialize wandb run
     run = wandb.init(
-        project="DIET-Finetuning_v3",
+        project=wandb_cfg["wandb_project"],
         name=experiment_name,
-        config=args,
+        config=wandb_cfg,
         settings=wandb.Settings(start_method="thread"),
         dir=wandb_dir,
         tags=[
-            args["backbone_type"],
-            args["model_size"],
-            args["dataset_name"],
-            "DIET" if args["label_smoothing"] > 0 else "Baseline",
+            wandb_cfg["backbone_type"],
+            wandb_cfg["model_size"],
+            wandb_cfg["dataset_name"],
+            "DIET" if wandb_cfg["label_smoothing"] > 0 else "Baseline",
         ],
     )
 
@@ -97,20 +96,32 @@ def log_evaluation_metrics(run, metrics, epoch):
     run.log(log_dict, step=epoch)
 
 
-def log_zero_shot_metrics(run, metrics, epoch, initial_metrics=None):
+def log_zero_shot_metrics(
+    run, metrics, epoch=None, initial_metrics=None, is_inference=False
+):
     """Log zero-shot evaluation metrics to wandb
 
     Args:
         run: wandb run object
         metrics: Dictionary of zero-shot metrics
-        epoch: Current epoch number
+        epoch: Current epoch number (optional, uses current step if None)
         initial_metrics: Initial zero-shot metrics for comparison (optional)
+        is_inference: Whether this is inference logging
     """
-    log_dict = {"epoch": epoch}
+    log_dict = {}
+
+    # Only include epoch in log_dict if provided
+    if epoch is not None:
+        log_dict["epoch"] = epoch
+
+    if is_inference:
+        log_key = "zero_shot_inference"
+    else:
+        log_key = "zero_shot"
 
     # Log each zero-shot metric
     for metric_name, value in metrics.items():
-        log_dict[f"zero_shot/{metric_name}"] = value
+        log_dict[f"{log_key}/{metric_name}"] = value
 
         # Log improvements if initial metrics are provided
         if initial_metrics is not None:
@@ -120,8 +131,8 @@ def log_zero_shot_metrics(run, metrics, epoch, initial_metrics=None):
                 if initial_metrics[metric_name] > 0
                 else float("inf")
             )
-            log_dict[f"zero_shot/{metric_name}_improvement"] = improvement
-            log_dict[f"zero_shot/{metric_name}_relative_improvement"] = (
+            log_dict[f"{log_key}/{metric_name}_improvement"] = improvement
+            log_dict[f"{log_key}/{metric_name}_relative_improvement"] = (
                 relative_improvement
             )
 
@@ -129,10 +140,69 @@ def log_zero_shot_metrics(run, metrics, epoch, initial_metrics=None):
     if initial_metrics is not None:
         improvements = [metrics[m] - initial_metrics[m] for m in metrics.keys()]
         avg_improvement = np.mean(improvements)
-        log_dict["zero_shot/average_improvement"] = avg_improvement
+        log_dict[f"{log_key}/average_improvement"] = avg_improvement
 
     # Log metrics to wandb
-    run.log(log_dict, step=epoch)
+    if epoch is not None:
+        run.log(log_dict, step=epoch)
+    else:
+        run.log(log_dict)  # Let wandb use the current step
+
+
+def log_inference_metrics_summary_table(
+    run,
+    wandb_id,
+    backbone_type,
+    model_size,
+    dataset,
+    initial_metrics,
+    final_metrics,
+    table_name="inference_metrics_summary_final",
+):
+    """Log inference metrics as a summary table to wandb
+
+    Args:
+        run: wandb run object
+        wandb_id: The wandb run ID
+        backbone_type: Model backbone type (e.g., dinov2, mae)
+        model_size: Model size (e.g., small, base, large)
+        dataset: Dataset name
+        initial_metrics: Dictionary of initial zero-shot metrics
+        final_metrics: Dictionary of final zero-shot metrics
+    """
+    # Get all metric names from the dictionaries
+    metric_names = list(initial_metrics.keys())
+
+    # Create column headers
+    columns = ["wandb_id", "backbone_type", "model_size", "dataset"]
+
+    # Add columns for initial metrics
+    for metric in metric_names:
+        columns.append(f"initial_{metric}")
+
+    # Add columns for final metrics
+    for metric in metric_names:
+        columns.append(f"final_{metric}")
+
+    # Create the table
+    inference_table = wandb.Table(columns=columns)
+
+    # Create the row data
+    row_data = [wandb_id, backbone_type, model_size, dataset]
+
+    # Add initial metric values
+    for metric in metric_names:
+        row_data.append(initial_metrics[metric])
+
+    # Add final metric values
+    for metric in metric_names:
+        row_data.append(final_metrics[metric])
+
+    # Add the row to the table
+    inference_table.add_data(*row_data)
+
+    # Log the table to wandb
+    run.log({table_name: inference_table})
 
 
 def save_model_checkpoint(
@@ -633,13 +703,6 @@ def create_experiment_dashboard(
         training_fig = create_training_progress_plot(metrics_history)
         log_figure_to_wandb(run, training_fig, "training_progress")
 
-        # Then create the zero-shot progression plot
-        tracked_epochs = sorted(metrics_history["zero_shot_metrics"].keys())
-        zero_shot_fig = create_zero_shot_progression_plot(
-            metrics_history, tracked_epochs, metrics_list
-        )
-        log_figure_to_wandb(run, zero_shot_fig, "zero_shot_progression")
-
         # Log tables with full metrics history
         log_metrics_table(
             run, metrics_history, initial_results, final_results, enhanced=True
@@ -647,7 +710,6 @@ def create_experiment_dashboard(
 
         # Log individual components
         run.log({"training_progress_final": wandb.Image(training_fig)})
-        run.log({"zero_shot_progression_final": wandb.Image(zero_shot_fig)})
     else:
         # If no metrics history, just log a simple summary table
         summary_columns = [

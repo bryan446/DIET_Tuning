@@ -567,7 +567,7 @@ def prepare_data_loaders(
         batch_size=batch_size,
         shuffle=True,
         drop_last=False,
-        num_workers=0,
+        num_workers=16,
     )
 
     val_loader = DataLoader(
@@ -575,7 +575,7 @@ def prepare_data_loaders(
         batch_size=batch_size,
         shuffle=False,
         drop_last=False,
-        num_workers=0,
+        num_workers=16,
     )
 
     test_loader = DataLoader(
@@ -583,7 +583,7 @@ def prepare_data_loaders(
         batch_size=batch_size,
         shuffle=False,
         drop_last=False,
-        num_workers=0,
+        num_workers=16,
     )
 
     dataset_info = {
